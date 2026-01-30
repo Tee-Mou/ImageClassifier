@@ -9,48 +9,79 @@ from torchvision.transforms import ToTensor
 import torchvision.transforms.functional as TF 
 import numpy as np
 import matplotlib.pyplot as plt
-from NeuralNet import MNISTModel
+from MNISTModel import MNISTModel
+from EuroSATModel import EuroSATModel
 from torch import nn
 from tqdm import tqdm
 
-
-
 class DataManager:
 
-    def load_mnist(self, root: str = "data") -> None:
-        self.train_data = datasets.MNIST(
-            root="data",
-            download=True,
-            train=True,
-            transform=ToTensor(),
-        )
-        self.test_data = datasets.MNIST(
-            root="data",
-            download=True,
-            train=False,
-            transform=ToTensor(),
-        )
+    model_list = {
+        "MNIST": {
+            "model": MNISTModel,
+            "dataset": datasets.MNIST,
+            "bonus_args": ["train"]
+        }, 
+        "EuroSAT": {
+            "model": EuroSATModel, 
+            "dataset": datasets.EuroSAT,
+            "bonus_args": []
+        }
+    }
+
+    def __init__(self, model : str | None = None, batch_size: int = 32, path: str | None = None) -> None:
+        self.batch_size = batch_size
+        self.load_model(model, path, True)
         self.train_size = len(self.train_data)
         self.test_size = len(self.test_data)
         self.select_criterion(nn.BCEWithLogitsLoss)
+
+    def load_model(self, model, name: str | None = None, load_data = False):
+        self.model = self.model_list[model]["model"]()
+        if name:
+            self.load_model_state(name)
+
+        dataset_args = {
+            "root":"data",
+            "download":True,
+            "transform":ToTensor(),
+        }
+        if "train" in self.model_list[model]["bonus_args"]:
+            dataset_args["train"] = True
+            self.train_data = self.model_list[model]["dataset"](**dataset_args)
+            dataset_args["train"] = False
+            self.test_data = self.model_list[model]["dataset"](**dataset_args)
+            self.labels = self.test_data.classes
+        else:
+            data = self.model_list[model]["dataset"](**dataset_args)
+            self.train_data, self.test_data = random_split(data, [0.8, 0.2])
+            self.labels = data.classes
+        self.train_loader = DataLoader(self.train_data, batch_size=self.batch_size)
+        self.test_loader = DataLoader(self.test_data, batch_size=self.batch_size)
+
+    def save_model_state(self, name):
+        path = "./model/" + self.model.__name__ + "/" + name + ".pth"
+        torch.save(self.model.state_dict(), path)
+
+    def load_model_state(self, name):
+        path = "./model/" + self.model.__name__ + "/" + name + ".pth"
+        self.model.load_state_dict(torch.load(path, weights_only=True))
     
     def show_image(self) -> None:
-        plt.imshow(self.test_data.data[0], cmap="gray")
-        plt.title(f"Example Image of {self.test_data.targets[0].item()} in the MNIST Dataset")
+        datapoint = next(iter(self.test_loader))
+        img = TF.to_pil_image(datapoint[0][0])
+        plt.imshow(img)
+        plt.title(f"Example Image of {datapoint[1][0].item()} in the Dataset")
         plt.show()
-
-    def fetch_example(self) -> tuple[torch.FloatTensor, int]:
-        img, label = self.test_data[0]
-        return (img, label)
     
     def select_criterion(self, criterion):
         self.criterion = criterion()
 
-    def train(self, model: MNISTModel, epochs = 10, lr = 0.01, batch_size = 32, scheduler = True):
+    def train(self, epochs = 10, lr = 0.01, batch_size = 32, scheduler = True):
         scheduler_factor = [1, 0.1]
         best_test_loss = np.inf
         train_loader = DataLoader(dataset=self.train_data, batch_size=batch_size)
-        optimiser = optim.SGD(model.parameters(), lr = lr)
+        optimiser = optim.SGD(self.model.parameters(), lr = lr)
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,patience=1,mode="max",threshold=0.001, factor=scheduler_factor[scheduler])
 
         train_results = []
@@ -70,7 +101,7 @@ class DataManager:
                 enumerate(pbar := tqdm(train_loader, leave=False))
             ):
                 one_hot_targets = torch.nn.functional.one_hot(targets, 10)
-                outputs = model(images)
+                outputs = self.model(images)
                 train_loss = self.criterion(outputs, one_hot_targets.float())
                 batch_loss = train_loss.item()
                 pbar.desc = f"    Processing Training Batch {batch_id} | Batch Loss = {batch_loss}"
@@ -82,18 +113,18 @@ class DataManager:
                 batch_number = batch_id + epoch * len(train_loader)
                 train_results.append((batch_number, batch_loss))       
 
-            test_loss, test_accuracy = self.test(model=model)
+            test_loss, test_accuracy = self.test()
             test_results.append(((epoch + 1) * len(train_loader), test_loss, test_accuracy))
             scheduler.step(test_accuracy)
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
-                torch.save(model.state_dict(), "./model/best.pth")
-            torch.save(model.state_dict(), "./model/latest.pth")
+                self.save_model_state("best")
+            self.save_model_state("latest")
 
         return (train_results, test_results)
 
-    def test(self, model: MNISTModel, batch_size = 32):
-        model.eval()
+    def test(self, batch_size = 32):
+        self.model.eval()
         test_loader = DataLoader(dataset=self.test_data, batch_size=batch_size)
         total_tests = len(self.test_data)
         test_accuracy = 0
@@ -103,7 +134,7 @@ class DataManager:
         ):
             with torch.no_grad():
                 one_hot_targets = torch.nn.functional.one_hot(targets, 10)
-                outputs = model(images)
+                outputs = self.model(images)
                 predictions = outputs.argmax(1)
                 batch_loss = self.criterion(outputs, one_hot_targets.float()).item()
                 test_loss += batch_loss
@@ -115,16 +146,17 @@ class DataManager:
         test_loss /= total_tests
         return test_loss, test_accuracy
     
-    def show_test_examples(self, model: MNISTModel, count = 1):
-        model.eval()
+    def show_test_example(self, count = 1):
+        self.model.eval()
         with torch.no_grad():
             for _ in range(count):
-                random_index = np.random.randint(0, len(self.test_data))
-                inp, target = self.test_data[random_index]
+                random_index = np.random.randint(0, self.batch_size)
+                data = next(iter(self.test_loader)) 
+                inp, target = (data[0][random_index], self.labels[data[1][random_index]])
                 img = TF.to_pil_image(inp)
                 inp = inp.unsqueeze(0)
-                output = model(inp)
-                prediction = output.argmax()
+                output = self.model(inp)
+                prediction = self.labels[output.argmax()]
                 plt.imshow(img)
                 plt.title(f"Predicted: {prediction} | Actual {target}")
                 plt.show()
