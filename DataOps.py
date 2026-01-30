@@ -6,6 +6,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import datasets, transforms, utils
 from torchvision.transforms import ToTensor
+import torchvision.transforms.functional as TF 
 import numpy as np
 import matplotlib.pyplot as plt
 from NeuralNet import MNISTModel
@@ -45,11 +46,12 @@ class DataManager:
     def select_criterion(self, criterion):
         self.criterion = criterion()
 
-    def train(self, model: MNISTModel, epochs = 10, lr = 0.01, batch_size = 32):
+    def train(self, model: MNISTModel, epochs = 10, lr = 0.01, batch_size = 32, scheduler = True):
+        scheduler_factor = [1, 0.1]
         best_test_loss = np.inf
         train_loader = DataLoader(dataset=self.train_data, batch_size=batch_size)
         optimiser = optim.SGD(model.parameters(), lr = lr)
-        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,patience=1,mode="max",threshold=0.001)
+        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,patience=1,mode="max",threshold=0.001, factor=scheduler_factor[scheduler])
 
         train_results = []
         test_results = []
@@ -112,6 +114,20 @@ class DataManager:
         test_accuracy /= total_tests
         test_loss /= total_tests
         return test_loss, test_accuracy
+    
+    def show_test_examples(self, model: MNISTModel, count = 1):
+        model.eval()
+        with torch.no_grad():
+            for _ in range(count):
+                random_index = np.random.randint(0, len(self.test_data))
+                inp, target = self.test_data[random_index]
+                img = TF.to_pil_image(inp)
+                inp = inp.unsqueeze(0)
+                output = model(inp)
+                prediction = output.argmax()
+                plt.imshow(img)
+                plt.title(f"Predicted: {prediction} | Actual {target}")
+                plt.show()
             
     @staticmethod
     def plot_training_results(train_results, test_results):
