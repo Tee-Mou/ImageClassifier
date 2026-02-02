@@ -13,6 +13,7 @@ from MNISTModel import MNISTModel
 from EuroSATModel import EuroSATModel
 from torch import nn
 from tqdm import tqdm
+import pandas
 
 class DataManager:
 
@@ -77,19 +78,22 @@ class DataManager:
     def select_criterion(self, criterion):
         self.criterion = criterion()
 
-    def train(self, epochs = 10, lr = 0.01, scheduler = True):
+    def train(self, csv_name, epochs = 10, lr = 0.01, scheduler = True):
         best_test_loss = np.inf
         train_loader = DataLoader(dataset=self.train_data, batch_size=self.batch_size)
         optimiser = optim.AdamW(self.model.parameters(), lr = lr)
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,mode="min",threshold=0.001, factor=0.01)
+        
+        csv_path = "./results/{}/{}".format(self.model.__name__(), csv_name)
+        model_results: pandas.DataFrame = pandas.DataFrame(columns=["Training Loss", "Test Loss", "Test Accuracy"])
+        model_results.index.name="Batch No."
 
-        train_results = []
-        test_results = []
+        current_batch = 0
 
         for epoch in (pbar_epoch := tqdm(range(epochs))):
             try:
-                previous_accuracy = test_results[-1][2]
-                previous_epoch = test_results[-1][0]
+                previous_epoch = epoch
+                previous_accuracy = 0
             except IndexError:
                 previous_epoch = "N/A"
                 previous_accuracy = 0
@@ -99,6 +103,7 @@ class DataManager:
             for batch_id, (images, targets) in (
                 enumerate(pbar := tqdm(train_loader, leave=False))
             ):
+                current_batch += 1
                 one_hot_targets = torch.nn.functional.one_hot(targets, 10)
                 outputs = self.model(images)
                 train_loss = self.criterion(outputs, one_hot_targets.float())
@@ -109,18 +114,19 @@ class DataManager:
                 train_loss.backward()
                 optimiser.step()
 
-                batch_number = batch_id + epoch * len(train_loader)
-                train_results.append((batch_number, batch_loss))       
+                model_results.loc[current_batch] = [batch_loss, None, None]
 
             test_loss, test_accuracy = self.test()
-            test_results.append(((epoch + 1) * len(train_loader), test_loss, test_accuracy))
-            if scheduler:
-                scheduler.step(test_loss)
+            model_results.at[current_batch, 'Test Loss'] = test_loss
+            model_results.at[current_batch, 'Test Accuracy'] = test_accuracy
+
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
                 self.save_model_state("best")
+            if scheduler:
+                scheduler.step(test_loss)
+            model_results.to_csv(csv_path)
             self.save_model_state("latest")
-        return train_results, test_results
 
     def test(self):
         self.model.eval()
@@ -163,28 +169,13 @@ class DataManager:
                 plt.show()
             
     @staticmethod
-    def plot_training_results(train_results, test_results):
-        
-        fig, ax1 = plt.subplots()
-        x_train, y_train = zip(*train_results)
-        x_test, y_test, acc_test = zip(*test_results)
-        ax1.set_xlabel("Batch Number")
-        ax1.set_ylabel("Training Loss", color="red")
-        ax1.plot(x_train, y_train, color="red")
+    def plot_training_results(csv_path = None, csv_name = None):
+        if csv_path == None:
+            csv_path = "./results/{}".format(csv_name)
+        data = pandas.read_csv(csv_path)
 
-        ax2 = ax1.twinx()
-        ax2.set_ylabel("Test Loss", color="blue")
-        ax2.plot(x_test, y_test, color="blue")
-
-        plt.title("Training and Test Loss for MNIST Model Training")
-        fig.tight_layout()
+        plot = data.plot(y=['Training Loss', 'Test Loss', 'Test Accuracy'])
         plt.show()
-
-        plt.ylabel("Test Accuracy")
-        plt.xlabel("Batch Number")
-        plt.plot(x_test, acc_test, color="orange")
-        plt.show()
-
 
 
 
