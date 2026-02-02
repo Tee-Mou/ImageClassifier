@@ -29,14 +29,14 @@ class DataManager:
         }
     }
 
-    def __init__(self, model : str | None = None, batch_size: int = 32, path: str | None = None) -> None:
+    def __init__(self, model : str, batch_size: int = 32, name: str | None = None) -> None:
         self.batch_size = batch_size
-        self.load_model(model, path, True)
+        self.load_model(model, name, True)
         self.train_size = len(self.train_data)
         self.test_size = len(self.test_data)
         self.select_criterion(nn.BCEWithLogitsLoss)
 
-    def load_model(self, model, name: str | None = None, load_data = False):
+    def load_model(self, model: str, name: str | None = None, load_data = False):
         self.model = self.model_list[model]["model"]()
         if name:
             self.load_model_state(name)
@@ -60,29 +60,28 @@ class DataManager:
         self.test_loader = DataLoader(self.test_data, batch_size=self.batch_size)
 
     def save_model_state(self, name):
-        path = "./model/" + self.model.__name__ + "/" + name + ".pth"
+        path = "./model/" + self.model.__name__() + "/" + name + ".pth"
         torch.save(self.model.state_dict(), path)
 
     def load_model_state(self, name):
-        path = "./model/" + self.model.__name__ + "/" + name + ".pth"
+        path = "./model/" + self.model.__name__() + "/" + name + ".pth"
         self.model.load_state_dict(torch.load(path, weights_only=True))
     
     def show_image(self) -> None:
         datapoint = next(iter(self.test_loader))
         img = TF.to_pil_image(datapoint[0][0])
         plt.imshow(img)
-        plt.title(f"Example Image of {datapoint[1][0].item()} in the Dataset")
+        plt.title(f"Example Image of {self.labels[datapoint[1][0].item()]} in the Dataset")
         plt.show()
     
     def select_criterion(self, criterion):
         self.criterion = criterion()
 
-    def train(self, epochs = 10, lr = 0.01, batch_size = 32, scheduler = True):
-        scheduler_factor = [1, 0.1]
+    def train(self, epochs = 10, lr = 0.01, scheduler = True):
         best_test_loss = np.inf
-        train_loader = DataLoader(dataset=self.train_data, batch_size=batch_size)
-        optimiser = optim.SGD(self.model.parameters(), lr = lr)
-        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,patience=1,mode="max",threshold=0.001, factor=scheduler_factor[scheduler])
+        train_loader = DataLoader(dataset=self.train_data, batch_size=self.batch_size)
+        optimiser = optim.AdamW(self.model.parameters(), lr = lr)
+        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,mode="min",threshold=0.001, factor=0.01)
 
         train_results = []
         test_results = []
@@ -115,17 +114,17 @@ class DataManager:
 
             test_loss, test_accuracy = self.test()
             test_results.append(((epoch + 1) * len(train_loader), test_loss, test_accuracy))
-            scheduler.step(test_accuracy)
+            if scheduler:
+                scheduler.step(test_loss)
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
                 self.save_model_state("best")
             self.save_model_state("latest")
+        return train_results, test_results
 
-        return (train_results, test_results)
-
-    def test(self, batch_size = 32):
+    def test(self):
         self.model.eval()
-        test_loader = DataLoader(dataset=self.test_data, batch_size=batch_size)
+        test_loader = DataLoader(dataset=self.test_data, batch_size=self.batch_size)
         total_tests = len(self.test_data)
         test_accuracy = 0
         test_loss = 0
@@ -156,9 +155,11 @@ class DataManager:
                 img = TF.to_pil_image(inp)
                 inp = inp.unsqueeze(0)
                 output = self.model(inp)
-                prediction = self.labels[output.argmax()]
+                prediction_order = output.argsort(dim=1, descending=True)[0]
+                prediction = self.labels[prediction_order[0]]
+                prediction_backup = self.labels[prediction_order[1]]
                 plt.imshow(img)
-                plt.title(f"Predicted: {prediction} | Actual {target}")
+                plt.title(f"Predicted: {prediction} (Second: {prediction_backup}) | Actual: {target}")
                 plt.show()
             
     @staticmethod

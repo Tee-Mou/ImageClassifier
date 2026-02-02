@@ -1,5 +1,6 @@
-venv
-model/latest.pth
-model/best.pth
+/venv
+/model/EuroSAT/*
+/model/MNIST/*
+/figures
 data
 __pycache__
