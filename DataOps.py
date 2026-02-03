@@ -15,18 +15,22 @@ from torch import nn
 from tqdm import tqdm
 import pandas
 
+from Evaluator import Evaluator as e
+
 class DataManager:
 
     model_list = {
         "MNIST": {
             "model": MNISTModel,
             "dataset": datasets.MNIST,
-            "bonus_args": ["train"]
+            "bonus_args": ["train"],
+            "eval": {"Best Only": e.best_only}
         }, 
         "EuroSAT": {
             "model": EuroSATModel, 
             "dataset": datasets.EuroSAT,
-            "bonus_args": []
+            "bonus_args": [],
+            "eval": {"Best Two": e.best_two, "Best Only": e.best_only}
         }
     }
 
@@ -38,6 +42,7 @@ class DataManager:
         self.select_criterion(nn.BCEWithLogitsLoss)
 
     def load_model(self, model: str, name: str | None = None, load_data = False):
+        self.name = model
         self.model = self.model_list[model]["model"]()
         if name:
             self.load_model_state(name)
@@ -61,11 +66,11 @@ class DataManager:
         self.test_loader = DataLoader(self.test_data, batch_size=self.batch_size)
 
     def save_model_state(self, name):
-        path = "./model/" + self.model.__name__() + "/" + name + ".pth"
+        path = "./model/" + self.name + "/" + name + ".pth"
         torch.save(self.model.state_dict(), path)
 
     def load_model_state(self, name):
-        path = "./model/" + self.model.__name__() + "/" + name + ".pth"
+        path = "./model/" + self.name + "/" + name + ".pth"
         self.model.load_state_dict(torch.load(path, weights_only=True))
     
     def show_image(self) -> None:
@@ -84,8 +89,8 @@ class DataManager:
         optimiser = optim.AdamW(self.model.parameters(), lr = lr)
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,mode="min",threshold=0.001, factor=0.01)
         
-        csv_path = "./results/{}/{}".format(self.model.__name__(), csv_name)
-        model_results: pandas.DataFrame = pandas.DataFrame(columns=["Training Loss", "Test Loss", "Test Accuracy"])
+        csv_path = "./results/{}".format(csv_name)
+        model_results: pandas.DataFrame = pandas.DataFrame(columns=["Training Loss", "Test Loss"] + list(self.model_list[self.name]["eval"]))
         model_results.index.name="Batch No."
 
         current_batch = 0
@@ -93,12 +98,12 @@ class DataManager:
         for epoch in (pbar_epoch := tqdm(range(epochs))):
             try:
                 previous_epoch = epoch
-                previous_accuracy = 0
-            except IndexError:
+                previous_loss = model_results.iloc[current_batch]["Test Loss"]
+            except KeyError, IndexError:
                 previous_epoch = "N/A"
-                previous_accuracy = 0
+                previous_loss = 0
             pbar_epoch.set_description(
-                f"Processing epoch {epoch + 1} | Epoch {previous_epoch} Accuracy: {previous_accuracy} | lr: {scheduler.get_last_lr()}"
+                f"Processing epoch {epoch + 1} | Epoch {previous_epoch} Loss: {previous_loss} | lr: {scheduler.get_last_lr()}"
             )
             for batch_id, (images, targets) in (
                 enumerate(pbar := tqdm(train_loader, leave=False))
@@ -114,11 +119,12 @@ class DataManager:
                 train_loss.backward()
                 optimiser.step()
 
-                model_results.loc[current_batch] = [batch_loss, None, None]
+                model_results.loc[current_batch] = [batch_loss, None, None, None]
 
             test_loss, test_accuracy = self.test()
-            model_results.at[current_batch, 'Test Loss'] = test_loss
-            model_results.at[current_batch, 'Test Accuracy'] = test_accuracy
+            model_results.at[current_batch, "Test Loss"] = test_loss
+            for k, v in test_accuracy.items():
+                model_results.at[current_batch, k] = v
 
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
@@ -132,7 +138,7 @@ class DataManager:
         self.model.eval()
         test_loader = DataLoader(dataset=self.test_data, batch_size=self.batch_size)
         total_tests = len(self.test_data)
-        test_accuracy = 0
+        test_accuracy = dict((k, 0) for k in self.model_list[self.name]["eval"])
         test_loss = 0
         for batch_id, (images, targets) in (
                 enumerate(pbar := tqdm(test_loader, leave=False))
@@ -140,17 +146,14 @@ class DataManager:
             with torch.no_grad():
                 one_hot_targets = torch.nn.functional.one_hot(targets, 10)
                 outputs = self.model(images)
-                predictions = outputs.argmax(1)
                 batch_loss = self.criterion(outputs, one_hot_targets.float()).item()
                 test_loss += batch_loss
-                for i in range(targets.size(0)):
-                    if targets[i] == predictions[i]:
-                        test_accuracy += 1
+                for eval_method, f in self.model_list[self.name]["eval"].items():
+                    test_accuracy[eval_method] += f(outputs, targets) / total_tests
             pbar.desc = f"Processing Test Batch {batch_id} | Batch Loss = {batch_loss}"
-        test_accuracy /= total_tests
-        test_loss /= total_tests
+        test_loss /= len(test_loader)
         return test_loss, test_accuracy
-    
+
     def show_test_example(self, count = 1):
         self.model.eval()
         with torch.no_grad():
@@ -173,8 +176,12 @@ class DataManager:
         if csv_path == None:
             csv_path = "./results/{}".format(csv_name)
         data = pandas.read_csv(csv_path)
-
-        plot = data.plot(y=['Training Loss', 'Test Loss', 'Test Accuracy'])
+        for col in data.columns:
+            if col == "Batch No.":
+                continue
+            col_data = data[col].dropna()
+            col_data.plot()
+        plt.legend()
         plt.show()
 
 

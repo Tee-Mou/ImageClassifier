@@ -1,6 +1,5 @@
-/venv
-/model/EuroSAT/*
-/model/MNIST/*
-/figures
+venv
+figures
 data
+/model/*
 __pycache__
