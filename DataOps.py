@@ -40,6 +40,7 @@ class DataManager:
         self.train_size = len(self.train_data)
         self.test_size = len(self.test_data)
         self.select_criterion(nn.BCEWithLogitsLoss)
+        self.select_optimiser(optim.SGD)
 
     def load_model(self, model: str, name: str | None = None, load_data = False):
         self.name = model
@@ -80,13 +81,16 @@ class DataManager:
         plt.title(f"Example Image of {self.labels[datapoint[1][0].item()]} in the Dataset")
         plt.show()
     
+    def select_optimiser(self, optimiser):
+        self.optimiser = optimiser
+
     def select_criterion(self, criterion):
         self.criterion = criterion()
 
     def train(self, csv_name, epochs = 10, lr = 0.01, scheduler = True):
         best_test_loss = np.inf
         train_loader = DataLoader(dataset=self.train_data, batch_size=self.batch_size)
-        optimiser = optim.AdamW(self.model.parameters(), lr = lr)
+        optimiser = self.optimiser(self.model.parameters(), lr = lr, momentum=0.5, weight_decay=0.001)
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,mode="min",threshold=0.001, factor=0.01)
         
         csv_path = "./results/{}".format(csv_name)
