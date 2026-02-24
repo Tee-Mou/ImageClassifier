@@ -39,8 +39,8 @@ class DataManager:
         self.load_model(model, name, True)
         self.train_size = len(self.train_data)
         self.test_size = len(self.test_data)
-        self.select_criterion(nn.BCEWithLogitsLoss)
-        self.select_optimiser(optim.SGD)
+        self.select_criterion(nn.CrossEntropyLoss)
+        self.select_optimiser(optim.AdamW)
 
     def load_model(self, model: str, name: str | None = None, load_data = False):
         self.name = model
@@ -90,7 +90,7 @@ class DataManager:
     def train(self, csv_name, epochs = 10, lr = 0.01, scheduler = True):
         best_test_loss = np.inf
         train_loader = DataLoader(dataset=self.train_data, batch_size=self.batch_size)
-        optimiser = self.optimiser(self.model.parameters(), lr = lr, momentum=0.5, weight_decay=0.001)
+        optimiser = self.optimiser(self.model.parameters(), lr = lr, weight_decay=0.24)
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimiser,mode="min",threshold=0.001, factor=0.01)
         
         csv_path = "./results/{}".format(csv_name)

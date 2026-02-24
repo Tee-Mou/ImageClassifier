@@ -1,10 +1,8 @@
-import os
 from DataOps import DataManager
 
 def main():
-    # manager = DataManager(model="EuroSAT", batch_size=100, name="EuroSAT95")
-    # manager.train(csv_name="EuroSAT Retrain", lr=0.001)
-    DataManager.plot_training_results(csv_name="EuroSAT Retrain")
+    manager = DataManager(model="EuroSAT", name="EuroSAT97", batch_size=32)
+    manager.show_test_example(5)
     return 0
     
 if __name__ == "__main__":
